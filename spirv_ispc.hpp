@@ -207,6 +207,7 @@ private:
 	// stdlib codegen
 	void codegen_constructor(std::string type, bool varying, uint32_t width, uint32_t arg_count, uint32_t arg_width[4]);
 	void codegen_cast_constructor(std::string src_type, std::string dst_type, bool varying, uint32_t width);
+    void codegen_matrix_constructor(std::string type, bool varying);
 	void codegen_load_op(std::string type, uint32_t width);
 	void codegen_store_op(std::string type, uint32_t width);
 	void codegen_default_structs(std::string type, uint32_t width);
@@ -267,6 +268,15 @@ private:
 	                       std::vector<std::string> &types, std::vector<uint32_t> vector_width,
 	                       const std::function<void(std::vector<std::string> varyings, std::vector<std::string> types,
 	                                                uint32_t vector_width)> &func);
+
+    void codegen_matrix_multiply(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
+    void codegen_matrix_transpose(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
+    void codegen_matrix_times_scalar(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
+    void codegen_vector_times_matrix(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
+    void codegen_matrix_times_vector(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
+    void codegen_matrix_inverse(std::string &varying);
+
+
 };
 } // namespace spirv_cross
 
