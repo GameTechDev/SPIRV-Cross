@@ -156,6 +156,7 @@ private:
 	void emit_workgroup_variables();
 
 	bool maybe_emit_array_assignment(uint32_t id_lhs, uint32_t id_rhs);
+    bool check_scalar_atomic_image(uint32_t id);
 
 	std::string variable_decl(const SPIRType &type, const std::string &name, uint32_t id) override;
 

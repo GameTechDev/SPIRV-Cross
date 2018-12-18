@@ -1014,6 +1014,30 @@ bool CompilerISPC::maybe_emit_array_assignment(uint32_t id_lhs, uint32_t id_rhs)
 	return true;
 }
 
+bool CompilerISPC::check_scalar_atomic_image(uint32_t id)
+{
+    auto &type = expression_type(id);
+    if (type.storage == StorageClassImage)
+    {
+        auto *var = maybe_get_backing_variable(id);
+        if (var)
+        {
+            auto &flags = meta.at(var->self).decoration.decoration_flags;
+            if (flags.get(DecorationNonWritable) || flags.get(DecorationNonReadable))
+            {
+                flags.clear(DecorationNonWritable);
+                flags.clear(DecorationNonReadable);
+                force_recompile = true;
+            }
+        }
+        if (!type.image.arrayed && ((type.image.dim == Dim1D) || (type.image.dim == DimBuffer)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
 void CompilerISPC::emit_instruction(const Instruction &instruction)
 {
 	auto ops = stream(instruction);
@@ -1200,9 +1224,9 @@ void CompilerISPC::emit_instruction(const Instruction &instruction)
 	case OpAtomicXor:
 	case OpAtomicExchange:
 	{
-		if (check_atomic_image(ops[2]))
+		if (!check_scalar_atomic_image(ops[2]))
 		{
-			SPIRV_CROSS_THROW("Atomic images not supported for ISPC.");
+			SPIRV_CROSS_THROW("Non Scalar Atomic images not supported for ISPC.");
 		}
 
 		string func;
