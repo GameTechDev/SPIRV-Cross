@@ -1282,6 +1282,19 @@ void CompilerISPC::emit_instruction(const Instruction &instruction)
 		break;
 	}
 
+    case OpImageTexelPointer:
+    {
+        uint32_t result_type = ops[0];
+        uint32_t id = ops[1];
+        auto &e =
+            set<SPIRExpression>(id, join(to_expression(ops[2]), "[", to_expression(ops[3]), "]"), result_type, true);
+
+        // When using the pointer, we need to know which variable it is actually loaded from.
+        auto *var = maybe_get_backing_variable(ops[2]);
+        e.loaded_from = var ? var->self : 0;
+        break;
+    }
+
     case OpStore:
     {
         if (maybe_emit_array_assignment(ops[0], ops[1]))
@@ -3694,6 +3707,11 @@ void CompilerISPC::emit_stdlib()
     }
     statement("struct mat3 { float3 m[3]; };");
     statement("struct mat4 { float4 m[4]; };");
+    statement("");
+    statement("typedef int uimageBuffer[]; // not supporting unsigned for now");
+    statement("typedef int imageBuffer[];");
+    statement("typedef int uimage1D[];     // not supporting unsigned for now");
+    statement("typedef int image1D[];");
 
     statement("");
 
