@@ -241,8 +241,6 @@ string CompilerISPC::bitcast_glsl_op(const SPIRType &out_type, const SPIRType &i
 
 void CompilerISPC::emit_resources()
 {
-	vector<string> varyings = { "varying", "uniform" };
-
 	// Output all basic struct types which are not Block or BufferBlock as these are declared inplace
 	// when such variables are instantiated.
 	statement("");
@@ -611,7 +609,7 @@ void CompilerISPC::emit_function_prototype(SPIRFunction &func, const Bitset &)
 	auto &type = get<SPIRType>(func.return_type);
 	decl += "static SPIRV_INLINE ";
 	if (type.basetype != SPIRType::Void)
-		decl += meta[func.self].decoration.ispc_varying ? "varying " : "uniform ";
+        decl += to_varying_qualifiers_ispc(func.self);
 	decl += type_to_glsl(type);
 	decl += " ";
 
@@ -691,6 +689,22 @@ bool CompilerISPC::optimize_read_modify_write(const SPIRType &type, const string
 	return true;
 }
 
+string CompilerISPC::to_varying_qualifiers_ispc(uint32_t id)
+{
+    string base;
+
+    if (meta[id].decoration.ispc_varying)
+        base = "varying ";
+    else
+        base = "uniform ";
+    return base;
+}
+
+string CompilerISPC::to_qualifiers_glsl(uint32_t id)
+{
+    return to_varying_qualifiers_ispc(id);
+}
+
 string CompilerISPC::argument_decl(const SPIRFunction::Parameter &arg)
 {
 	auto &type = expression_type(arg.id);
@@ -711,25 +725,23 @@ string CompilerISPC::argument_decl(const SPIRFunction::Parameter &arg)
 	// arrays get confused if passed by reference
 	string passByRef = type.array.size() ? " " : "& ";
 
-	return join(meta[arg.id].decoration.ispc_varying ? "varying " : "uniform ", constref ? "const " : "", base,
+	return join(to_varying_qualifiers_ispc(arg.id), constref ? "const " : "", base,
 	            passByRef, variable_name);
 }
 
 string CompilerISPC::variable_decl(const SPIRType &type, const string &name, uint32_t id)
 {
-	string base;
-
+    string base;
+#if 0
 	if (id > 0)
 	{
-		if (meta[id].decoration.ispc_varying)
-			base = "varying ";
-		else
-			base = "uniform ";
-	}
+        base = to_qualifiers_glsl(id);
+    }
 	else
 	{
 		// Should only get in here for struct members etc
 	}
+#endif
 
 	base += type_to_glsl(type, id);
 	remap_variable_type_name(type, name, base);
@@ -2283,13 +2295,12 @@ string CompilerISPC::entry_point_args(bool append_comma, bool want_builtins, boo
 			{
 			case SPIRType::Struct:
 			{
-				string varying = meta[var_id].decoration.ispc_varying ? "varying " : "uniform ";
 				auto &m = meta.at(type.self);
 				if (m.members.size() == 0)
 					break;
 				if (!ep_args.empty())
 					ep_args += ", ";
-				ep_args += " " + varying + type_to_glsl(type, var_id) + "& " + to_name(var_id);
+				ep_args += " " + to_varying_qualifiers_ispc(var_id) + type_to_glsl(type, var_id) + "& " + to_name(var_id);
 				break;
 			}
 			case SPIRType::Image:
@@ -2333,18 +2344,17 @@ string CompilerISPC::entry_point_args(bool append_comma, bool want_builtins, boo
 
 			if (add_arg)
 			{
-				string varying = meta[var_id].decoration.ispc_varying ? "varying " : "uniform ";
 				if (!ep_args.empty())
 					ep_args += ", ";
 
 				// Need to ensure that workgroup arrays are passed as pointers/references.
 				// TODO : Ensure these are correctly passed to other functions if required...
 				if (is_array(type))
-					ep_args += varying + type_to_glsl(type, var_id) + "* " + to_expression(var_id);
+					ep_args += to_varying_qualifiers_ispc(var_id) + type_to_glsl(type, var_id) + "* " + to_expression(var_id);
 				else if (workgroup_var) // Need passing by reference
-					ep_args += varying + type_to_glsl(type, var_id) + "& " + to_expression(var_id);
+					ep_args += to_varying_qualifiers_ispc(var_id) + type_to_glsl(type, var_id) + "& " + to_expression(var_id);
 				else
-					ep_args += varying + type_to_glsl(type, var_id) + " " + to_expression(var_id);
+					ep_args += to_varying_qualifiers_ispc(var_id) + type_to_glsl(type, var_id) + " " + to_expression(var_id);
 			}
 		}
 	}

@@ -160,7 +160,9 @@ private:
 
 	std::string variable_decl(const SPIRType &type, const std::string &name, uint32_t id) override;
 
-	std::string argument_decl(const SPIRFunction::Parameter &arg);
+    std::string to_qualifiers_glsl(uint32_t id) override;
+    std::string to_varying_qualifiers_ispc(uint32_t id) override;
+    std::string argument_decl(const SPIRFunction::Parameter &arg) override;
 	std::string type_to_glsl(const SPIRType &type, uint32_t id = 0) override;
 	std::string type_to_glsl_constructor(const SPIRType &type) override;
 	std::string bitcast_glsl_op(const SPIRType &result_type, const SPIRType &argument_type) override;

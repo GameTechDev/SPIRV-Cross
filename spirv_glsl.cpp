@@ -3275,7 +3275,7 @@ string CompilerGLSL::declare_temporary(uint32_t result_type, uint32_t result_id)
 	{
 		// The result_id has not been made into an expression yet, so use flags interface.
 		add_local_variable_name(result_id);
-		return join(flags_to_precision_qualifiers_glsl(type, flags), variable_decl(type, to_name(result_id), result_id),
+		return join(flags_to_precision_qualifiers_glsl(type, flags), to_varying_qualifiers_ispc(result_id), variable_decl(type, to_name(result_id), result_id),
 		            " = ");
 	}
 }
@@ -9519,13 +9519,16 @@ void CompilerGLSL::emit_hoisted_temporaries(vector<pair<uint32_t, uint32_t>> &te
 	// Need to sort these to ensure that reference output is stable.
 	sort(begin(temporaries), end(temporaries),
 	     [](const pair<uint32_t, uint32_t> &a, const pair<uint32_t, uint32_t> &b) { return a.second < b.second; });
+    
+    // Remove any duplicates. There shouldn't be any, but the odd one can creep in.
+    temporaries.erase(unique(temporaries.begin(), temporaries.end()), temporaries.end());
 
 	for (auto &tmp : temporaries)
 	{
 		add_local_variable_name(tmp.second);
 		auto flags = meta[tmp.second].decoration.decoration_flags;
 		auto &type = get<SPIRType>(tmp.first);
-		statement(flags_to_precision_qualifiers_glsl(type, flags), variable_decl(type, to_name(tmp.second), tmp.second),
+		statement(flags_to_precision_qualifiers_glsl(type, flags), to_varying_qualifiers_ispc(tmp.second), variable_decl(type, to_name(tmp.second), tmp.second),
 		          ";");
 
 		hoisted_temporaries.insert(tmp.second);

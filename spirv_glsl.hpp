@@ -336,6 +336,8 @@ protected:
 	uint32_t to_array_size_literal(const SPIRType &type, uint32_t index) const;
 	std::string variable_decl(const SPIRVariable &variable);
 	std::string variable_decl_function_local(SPIRVariable &variable);
+    virtual std::string to_varying_qualifiers_ispc(uint32_t id) { return ""; };
+
 
 	void add_local_variable_name(uint32_t id);
 	void add_resource_name(uint32_t id);
@@ -472,7 +474,7 @@ protected:
 	void strip_enclosed_expression(std::string &expr);
 	std::string to_member_name(const SPIRType &type, uint32_t index);
 	virtual std::string type_to_glsl_constructor(const SPIRType &type);
-	std::string argument_decl(const SPIRFunction::Parameter &arg);
+    virtual std::string argument_decl(const SPIRFunction::Parameter &arg);
 	virtual std::string to_qualifiers_glsl(uint32_t id);
 	const char *to_precision_qualifiers_glsl(uint32_t id);
 	virtual const char *to_storage_qualifiers_glsl(const SPIRVariable &var);
