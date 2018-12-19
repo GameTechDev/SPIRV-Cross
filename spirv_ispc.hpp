@@ -217,6 +217,7 @@ private:
 	void codegen_default_structs(std::string type, uint32_t width);
 	void codegen_default_image_structs(uint32_t width);
 	void codegen_default_pixel_structs(uint32_t width);
+    void codegen_default_texture_structs(uint32_t width);
 	void codegen_default_binary_op(std::string type, uint32_t width, std::string op);
 
 	void codegen_unary_float_op(
