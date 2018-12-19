@@ -5142,6 +5142,17 @@ const char *CompilerGLSL::index_to_swizzle(uint32_t index)
 	}
 }
 
+std::string CompilerGLSL::matrix_to_vector(uint32_t index, bool index_is_literal)
+{
+    string expr = "[";
+    if (index_is_literal)
+        expr += convert_to_string(index);
+    else
+        expr += to_expression(index);
+    expr += "]";
+    return expr;
+}
+
 string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indices, uint32_t count,
                                            bool index_is_literal, bool chain_only, bool *need_transpose,
                                            bool *result_is_packed)
@@ -5309,12 +5320,7 @@ string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indice
 				is_packed = false;
 			}
 
-			expr += "[";
-			if (index_is_literal)
-				expr += convert_to_string(index);
-			else
-				expr += to_expression(index);
-			expr += "]";
+            expr += matrix_to_vector(index, index_is_literal);
 
 			type_id = type->parent_type;
 			type = &get<SPIRType>(type_id);

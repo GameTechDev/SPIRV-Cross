@@ -1050,6 +1050,7 @@ bool CompilerISPC::check_scalar_atomic_image(uint32_t id)
 
     return false;
 }
+
 void CompilerISPC::emit_instruction(const Instruction &instruction)
 {
 	auto ops = stream(instruction);
@@ -1236,7 +1237,7 @@ void CompilerISPC::emit_instruction(const Instruction &instruction)
 	case OpAtomicXor:
 	case OpAtomicExchange:
 	{
-		if (!check_scalar_atomic_image(ops[2]))
+		if (check_atomic_image(ops[2]) && !check_scalar_atomic_image(ops[2]))
 		{
 			SPIRV_CROSS_THROW("Non Scalar Atomic images not supported for ISPC.");
 		}
@@ -2639,6 +2640,17 @@ void CompilerISPC::emit_access_chain(const Instruction &instruction)
 string CompilerISPC::layout_for_member(const SPIRType &, uint32_t)
 {
 	return "";
+}
+
+std::string CompilerISPC::matrix_to_vector(uint32_t index, bool index_is_literal)
+{
+    string expr = ".m[";
+    if (index_is_literal)
+        expr += convert_to_string(index);
+    else
+        expr += to_expression(index);
+    expr += "]";
+    return expr;
 }
 
 //

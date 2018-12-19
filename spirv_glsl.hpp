@@ -337,6 +337,7 @@ protected:
 	std::string variable_decl(const SPIRVariable &variable);
 	std::string variable_decl_function_local(SPIRVariable &variable);
     virtual std::string to_varying_qualifiers_ispc(uint32_t id) { return ""; };
+    virtual std::string matrix_to_vector(uint32_t index, bool index_is_literal);
 
 
 	void add_local_variable_name(uint32_t id);

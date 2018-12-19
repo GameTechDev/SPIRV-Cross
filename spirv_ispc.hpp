@@ -129,6 +129,7 @@ protected:
 		};
 		std::vector<conditional_block_tracker *> condition_block_stack;
 	};
+    std::string matrix_to_vector(uint32_t index, bool index_is_literal) override;
 
 private:
 	void emit_header() override;
