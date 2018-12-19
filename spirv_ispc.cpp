@@ -398,8 +398,9 @@ string CompilerISPC::compile()
 	backend.flexible_member_array_supported = false;
 	backend.explicit_struct_type = true;
 	backend.use_initializer_list = true;
-	backend.supports_native_swizzle = false;
-	backend.stdlib_filename = "spirvcross_stdlib.ispc";
+    backend.supports_native_swizzle = false;
+    backend.supports_complex_composite_extraction = false;
+    backend.stdlib_filename = "spirvcross_stdlib.ispc";
 
 	update_active_builtins();
 

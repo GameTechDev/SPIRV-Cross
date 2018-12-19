@@ -6485,7 +6485,10 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 		auto &type = get<SPIRType>(result_type);
 
 		// We can only split the expression here if our expression is forwarded as a temporary.
-		bool allow_base_expression = forced_temporaries.find(id) == end(forced_temporaries);
+        bool allow_base_expression = forced_temporaries.find(id) == end(forced_temporaries);
+
+        if (!backend.supports_complex_composite_extraction)
+            forced_temporaries.insert(ops[2]);
 
 		// Do not allow base expression for struct members. We risk doing "swizzle" optimizations in this case.
 		auto &composite_type = expression_type(ops[2]);

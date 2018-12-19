@@ -387,6 +387,7 @@ protected:
 		bool supports_extensions = false;
 		bool supports_empty_struct = false;
 		bool supports_native_swizzle = true; // Used in build_composite_combiner to generate swizzles
+        bool supports_complex_composite_extraction = true; // When false, composite extracts are forced to temporaries
 		std::string stdlib_filename = "sprivcross_stdlib";
 	} backend;
 
