@@ -6484,14 +6484,20 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 
 		auto &type = get<SPIRType>(result_type);
 
+        auto *composite_expr = maybe_get<SPIRExpression>(ops[2]);
+        auto &composite_type = expression_type(ops[2]);
+
+        // If the composite expression is NOT a load (ie. it could be a function call), 
+        // and if it is not an array that is forwarded,
+        // force it to be a temporary
+        if (composite_expr && !composite_expr->loaded_from && !(should_forward(ops[2]) && !composite_type.array.empty()))
+            if (!backend.supports_complex_composite_extraction)
+                forced_temporaries.insert(ops[2]);
+
 		// We can only split the expression here if our expression is forwarded as a temporary.
         bool allow_base_expression = forced_temporaries.find(id) == end(forced_temporaries);
 
-        if (!backend.supports_complex_composite_extraction)
-            forced_temporaries.insert(ops[2]);
-
 		// Do not allow base expression for struct members. We risk doing "swizzle" optimizations in this case.
-		auto &composite_type = expression_type(ops[2]);
 		if (composite_type.basetype == SPIRType::Struct || !composite_type.array.empty())
 			allow_base_expression = false;
 
