@@ -44,7 +44,11 @@ string ensure_valid_identifier(const string &name, bool member);
 
 // Enable this define to print out the full dependancy chains used for determining if variables are vector/varying or scalar/uniform.
 // Default assumption is that they are uniform.
-#define DUMP_VARYING_DEPENDANCIES 0
+#define DUMP_VARYING_DEPENDANCIES   0
+
+// Enable this to debugbreak on a specific variable ID when debugging varyings.
+#define DEBUG_BREAK_ON_VARYING      0
+#define DEBUG_BREAK_VARYING_ID      1812
 
 void CompilerISPC::emit_buffer_block(const SPIRVariable &var)
 {
@@ -1538,6 +1542,10 @@ bool CompilerISPC::VectorisationHandler::handle(spv::Op opcode, const uint32_t *
 	auto add_dependancies = [&](const uint32_t dst, const uint32_t src) {
 		dependee_hierarchy[src].insert(dst);
 		dependant_hierarchy[dst].insert(src);
+#if DEBUG_BREAK_ON_VARYING
+        if ((src == DEBUG_BREAK_VARYING_ID) || (dst == DEBUG_BREAK_VARYING_ID))
+            __debugbreak();
+#endif
 	};
 
 	switch (opcode)
@@ -1842,6 +1850,10 @@ void CompilerISPC::VectorisationHandler::set_current_block(const SPIRBlock &bloc
 // been seeded, so find the varyings and propogate down the dependancy tree
 bool CompilerISPC::VectorisationHandler::propogate_ispc_varyings(const uint32_t var)
 {
+#if DEBUG_BREAK_ON_VARYING
+    if (var == DEBUG_BREAK_VARYING_ID)
+        __debugbreak();
+#endif
 	bool bPropogate = false;
 	auto varIt = dependee_hierarchy.find(var);
 	if (varIt != dependee_hierarchy.end())
@@ -1853,6 +1865,10 @@ bool CompilerISPC::VectorisationHandler::propogate_ispc_varyings(const uint32_t 
 			{
 				if (!compiler.meta[dependantVarIt].decoration.ispc_varying)
 				{
+#if DEBUG_BREAK_ON_VARYING
+                    if (dependantVarIt == DEBUG_BREAK_VARYING_ID)
+                        __debugbreak();
+#endif
 					compiler.meta[dependantVarIt].decoration.ispc_varying = true;
 					bPropogate = true;
 
