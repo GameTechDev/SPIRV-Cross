@@ -2372,7 +2372,7 @@ string CompilerISPC::entry_point_args(bool append_comma, bool want_builtins, boo
 				// Need to ensure that workgroup arrays are passed as pointers/references.
 				// TODO : Ensure these are correctly passed to other functions if required...
 				if (is_array(type))
-					ep_args += to_varying_qualifiers_ispc(var_id) + type_to_glsl(type, var_id) + "* " + to_expression(var_id);
+					ep_args += to_varying_qualifiers_ispc(var_id) + type_to_glsl(type, var_id) + "* uniform " + to_expression(var_id);
 				else if (workgroup_var) // Need passing by reference
 					ep_args += to_varying_qualifiers_ispc(var_id) + type_to_glsl(type, var_id) + "& " + to_expression(var_id);
 				else
