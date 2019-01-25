@@ -1562,13 +1562,17 @@ bool CompilerISPC::VectorisationHandler::handle(spv::Op opcode, const uint32_t *
 			add_dependancies(args[1], args[i]);
 
 			// Access chains need to be 2-way as they are simply indirections.
-			// But, if the src is a global passed in by the user, then we don't as they are always uniform
-			// but perhaps with varying runtime arrays.
+            // If the variable is an array, or a global passed in by the user, then we treat them as uniforms.
+            // This will break with an array of varyings with a varying lookup
 			{
 				auto *var = compiler.maybe_get<SPIRVariable>(args[i]);
 				if (var && var->storage == StorageClassFunction)
 				{
-					add_dependancies(args[i], args[1]);
+                    auto &type = compiler.get<SPIRType>(var->basetype);
+                    if (!compiler.is_array(type))
+                    {
+                        add_dependancies(args[i], args[1]);
+                    }
 				}
 			}
 
