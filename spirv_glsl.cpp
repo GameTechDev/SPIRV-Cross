@@ -6489,10 +6489,18 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 
         // If the composite expression is NOT a load (ie. it could be a function call), 
         // and if it is not an array that is forwarded,
-        // force it to be a temporary
+        // force it to be a temporary and force a recompile so it is not forwarded
         if (composite_expr && !composite_expr->loaded_from && !(should_forward(ops[2]) && !composite_type.array.empty()))
+        {
             if (!backend.supports_complex_composite_extraction)
-                forced_temporaries.insert(ops[2]);
+            {
+                if (forced_temporaries.find(ops[2]) == end(forced_temporaries))
+                {
+                    forced_temporaries.insert(ops[2]);
+                    force_recompile = true;
+                }
+            }
+        }
 
 		// We can only split the expression here if our expression is forwarded as a temporary.
         bool allow_base_expression = forced_temporaries.find(id) == end(forced_temporaries);
