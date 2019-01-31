@@ -2278,11 +2278,8 @@ void CompilerISPC::find_entry_point_args()
 					entry_point_ids.push_back(&id);
 					break;
 				}
+                case SPIRType::SampledImage:
                 case SPIRType::Image:
-                {
-                    entry_point_ids.push_back(&id);
-                    break;
-                }
                 case SPIRType::Sampler:
                 {
                     entry_point_ids.push_back(&id);
@@ -2346,6 +2343,7 @@ string CompilerISPC::entry_point_args(bool append_comma, bool want_builtins, boo
 			}
             case SPIRType::Image:
             case SPIRType::Sampler:
+            case SPIRType::SampledImage:
                 if (!ep_args.empty())
                     ep_args += ", ";
                 ep_args += "uniform " + type_to_glsl(type, var_id) + " &" + to_name(var_id);
@@ -2438,6 +2436,7 @@ string CompilerISPC::entry_point_args_init(bool append_comma)
 			}
             case SPIRType::Image:
             case SPIRType::Sampler:
+            case SPIRType::SampledImage:
             {
 				if (!ep_args.empty())
 					ep_args += ", ";
@@ -2811,6 +2810,9 @@ void CompilerISPC::codegen_default_image_structs(uint32_t width)
 
 void CompilerISPC::codegen_default_texture_structs(uint32_t width)
 {
+    std::string texW = join("texture", width, "D");
+    std::string samplerW = join("sampler", width, "D");
+
     statement("typedef enum spvTextureFilter");
     begin_scope();
     statement("SPV_TEXTURE_FILTER_MIN_MAG_MIP_POINT = 0,");
@@ -2824,6 +2826,7 @@ void CompilerISPC::codegen_default_texture_structs(uint32_t width)
     end_scope_decl();
     statement("");
 
+    statement("// Separate Sampler");
     statement("struct sampler");
     begin_scope();
     statement("spvTextureFilter filter;");
@@ -2831,20 +2834,40 @@ void CompilerISPC::codegen_default_texture_structs(uint32_t width)
     statement("spvTextureAddress addressV;");
     end_scope_decl();
     statement("");
-    statement("#define sampler2DShadow(t, s) t, s");
-    statement("#define sampler2D(t, s) t, s");
-    statement("");
 
     statement("#define SPV_MAX_MIP_COUNT 12");
-    statement("struct texture", width, "D");
+    statement("struct ", texW);
     begin_scope();
     statement("unsigned int width;");
     statement("unsigned int height;");
     statement("unsigned int numComponents;");
     statement("unsigned int mipCount;");
-    statement("float mips[SPV_MAX_MIP_COUNT][]; // 12 mips supports upto 2k textures");
+    statement("float *mips[SPV_MAX_MIP_COUNT]; // 12 mips supports upto 2k textures");
     end_scope_decl();
     statement("");
+
+    statement("// Combined Image Sampler");
+    statement("struct ", samplerW);
+    begin_scope();
+    statement("sampler s;");
+    statement(texW, " t;");
+    end_scope_decl();
+    statement("");
+
+    statement("// Combined Image Sampler Constructor");
+    statement("uniform ", samplerW, " ", samplerW, "_init(uniform ", texW, " &t, uniform sampler &s)");
+    begin_scope();
+    statement("uniform ", samplerW, " samplerW = { s, t };");
+    statement("return samplerW;");
+    end_scope_decl();
+    statement("");
+    statement("#define ", samplerW, "Shadow(...) ", samplerW, "_init(__VA_ARGS__)");
+    statement("#define ", samplerW, "(...) ", samplerW, "_init(__VA_ARGS__)");
+    statement("");
+
+
+    statement("");
+
 }
 
 
@@ -4378,34 +4401,40 @@ void CompilerISPC::emit_stdlib()
         statement("if (mip >= tex.mipCount)");
         statement("    return ret;");
         statement("");
-        statement("varying float u = uv.x;");
-        statement("varying float v = uv.y;");
+        statement("varying int wi = tex.width >> mip;");
+        statement("varying int hi = tex.height >> mip;");
+        statement("varying float w = (float)wi;");
+        statement("varying float h = (float)hi;");
+        statement("");
+        statement("uv = uv * float2(w, h);// + float2(0.5);");
         statement("");
         statement(" // Wrap - others not yet supported");
         statement("if (samp.addressU == SPV_TEXTURE_ADDRESS_WRAP)");
-        statement("    u = mod(u, 1.0f);");
+        statement("    uv.x = mod(uv.x, w);");
         statement("// Clamp");
         statement("else if (samp.addressU == SPV_TEXTURE_ADDRESS_CLAMP)");
-        statement("    u = clamp(u, 0.0f, 1.0f);");
+        statement("    uv.x = clamp(uv.x, 0.0f, w-1);");
         statement("");
         statement("if (samp.addressV == SPV_TEXTURE_ADDRESS_WRAP)");
-        statement("    v = mod(v, 1.0f);");
+        statement("    uv.y = mod(uv.y, h);");
         statement("else if (samp.addressV == SPV_TEXTURE_ADDRESS_CLAMP)");
-        statement("    v = clamp(v, 0.0f, 1.0f);");
+        statement("    uv.y = clamp(uv.y, 0.0f, h-1);");
         statement("");
-        statement("varying int w = tex.width >> mip;");
-        statement("varying int h = tex.height >> mip;");
-        statement("u *= (w - 1);");
-        statement("v *= (h - 1);");
         statement("");
-        statement("varying int index = tex.numComponents * (trunc(v) * w + trunc(u));");
+        statement("varying int index = tex.numComponents * (trunc(uv.y) * wi + trunc(uv.x));");
         statement("");
+        statement("// --opt=fast-math can cause rounding issues here (especially when incoming tex coord is 1.0), so clamp to buffer size");
+        statement("index = index % (wi * hi);");
+        statement("");
+        statement("foreach_unique(ii in mip)");
+        begin_scope();
         statement("switch (tex.numComponents)");
         begin_scope();
-        statement("case 1: ret = float4(tex.mips[mip][index + 0], 0.0, 0.0, 0.0); break;");
-        statement("case 2: ret = float4(tex.mips[mip][index + 0], tex.mips[mip][index + 1], 0.0, 0.0); break;");
-        statement("case 3: ret = float4(tex.mips[mip][index + 0], tex.mips[mip][index + 1], tex.mips[mip][index + 2], 0.0); break;");
-        statement("case 4: ret = float4(tex.mips[mip][index + 0], tex.mips[mip][index + 1], tex.mips[mip][index + 2], tex.mips[mip][index + 3]); break;");
+        statement("case 1: ret = float4(tex.mips[ii][index + 0], 0.0, 0.0, 0.0); break;");
+        statement("case 2: ret = float4(tex.mips[ii][index + 0], tex.mips[ii][index + 1], 0.0, 0.0); break;");
+        statement("case 3: ret = float4(tex.mips[ii][index + 0], tex.mips[ii][index + 1], tex.mips[ii][index + 2], 0.0); break;");
+        statement("case 4: ret = float4(tex.mips[ii][index + 0], tex.mips[ii][index + 1], tex.mips[ii][index + 2], tex.mips[ii][index + 3]); break;");
+        end_scope();
         end_scope();
         statement("");
         statement("return ret;");
@@ -4416,6 +4445,15 @@ void CompilerISPC::emit_stdlib()
         statement("return textureLod(tex, samp, uv, 0);");
         end_scope();
         statement("");
+        statement("static SPIRV_INLINE varying float4 textureLod(uniform sampler2D &combinedSampler, varying float2 uv, varying int mip)");
+        begin_scope();
+        statement("return textureLod(combinedSampler.t, combinedSampler.s, uv, mip);");
+        end_scope();
+        statement("static SPIRV_INLINE varying float4 textureLod(uniform sampler2D &combinedSampler, varying float2 uv)");
+        begin_scope();
+        statement("return textureLod(combinedSampler.t, combinedSampler.s, uv, 0);");
+        end_scope();
+
     }
 
     //
