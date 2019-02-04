@@ -24,27 +24,29 @@ Intel modifications are to add ISPC kernel output support, primarily for SPIRV c
 
 * Supports vector types float2-4, int2-4, bool 2-4
 
+* Supports Mat3 and Mat4 types and operations.
+
 * Basic support for RGBA8 images
+
+* Basic support for float textures and samplers
 
 * Atomic support
 
 * Built and tested on Windows only
 
+* Shared local memory support
+
   
 
 ### SPIRV to ISPC Missing Features
 
-* No matrix support
-
-* No texture support
-
-* No shared memory support or barrier support
-
-* Limited builtin function support
-
 * No runtime modifications of specialization constants
 
 * Not built or tested on Linux/MacOS
+
+  
+
+  Thanks to Zigguratvertigo for [contributions](https://github.com/zigguratvertigo/hlsl-to-ispc/blob/master/hlsl.ispc) taken from his HLSL to ISPC project. 
 
   
 

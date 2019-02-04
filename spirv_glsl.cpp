@@ -3275,8 +3275,8 @@ string CompilerGLSL::declare_temporary(uint32_t result_type, uint32_t result_id)
 	{
 		// The result_id has not been made into an expression yet, so use flags interface.
 		add_local_variable_name(result_id);
-		return join(flags_to_precision_qualifiers_glsl(type, flags), variable_decl(type, to_name(result_id), result_id),
-		            " = ");
+		return join(flags_to_precision_qualifiers_glsl(type, flags), to_varying_qualifiers_ispc(result_id),
+		            variable_decl(type, to_name(result_id), result_id), " = ");
 	}
 }
 
@@ -5142,6 +5142,17 @@ const char *CompilerGLSL::index_to_swizzle(uint32_t index)
 	}
 }
 
+std::string CompilerGLSL::matrix_to_vector(uint32_t index, bool index_is_literal)
+{
+	string expr = "[";
+	if (index_is_literal)
+		expr += convert_to_string(index);
+	else
+		expr += to_expression(index);
+	expr += "]";
+	return expr;
+}
+
 string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indices, uint32_t count,
                                            bool index_is_literal, bool chain_only, bool *need_transpose,
                                            bool *result_is_packed)
@@ -5309,12 +5320,7 @@ string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indice
 				is_packed = false;
 			}
 
-			expr += "[";
-			if (index_is_literal)
-				expr += convert_to_string(index);
-			else
-				expr += to_expression(index);
-			expr += "]";
+			expr += matrix_to_vector(index, index_is_literal);
 
 			type_id = type->parent_type;
 			type = &get<SPIRType>(type_id);
@@ -6478,11 +6484,29 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 
 		auto &type = get<SPIRType>(result_type);
 
+		auto *composite_expr = maybe_get<SPIRExpression>(ops[2]);
+		auto &composite_type = expression_type(ops[2]);
+
+		// If the composite expression is NOT a load (ie. it could be a function call),
+		// and if it is not an array that is forwarded,
+		// force it to be a temporary and force a recompile so it is not forwarded
+		if (composite_expr && !composite_expr->loaded_from &&
+		    !(should_forward(ops[2]) && !composite_type.array.empty()))
+		{
+			if (!backend.supports_complex_composite_extraction)
+			{
+				if (forced_temporaries.find(ops[2]) == end(forced_temporaries))
+				{
+					forced_temporaries.insert(ops[2]);
+					force_recompile = true;
+				}
+			}
+		}
+
 		// We can only split the expression here if our expression is forwarded as a temporary.
 		bool allow_base_expression = forced_temporaries.find(id) == end(forced_temporaries);
 
 		// Do not allow base expression for struct members. We risk doing "swizzle" optimizations in this case.
-		auto &composite_type = expression_type(ops[2]);
 		if (composite_type.basetype == SPIRType::Struct || !composite_type.array.empty())
 			allow_base_expression = false;
 
@@ -9520,13 +9544,16 @@ void CompilerGLSL::emit_hoisted_temporaries(vector<pair<uint32_t, uint32_t>> &te
 	sort(begin(temporaries), end(temporaries),
 	     [](const pair<uint32_t, uint32_t> &a, const pair<uint32_t, uint32_t> &b) { return a.second < b.second; });
 
+	// Remove any duplicates. There shouldn't be any, but the odd one can creep in.
+	temporaries.erase(unique(temporaries.begin(), temporaries.end()), temporaries.end());
+
 	for (auto &tmp : temporaries)
 	{
 		add_local_variable_name(tmp.second);
 		auto flags = meta[tmp.second].decoration.decoration_flags;
 		auto &type = get<SPIRType>(tmp.first);
-		statement(flags_to_precision_qualifiers_glsl(type, flags), variable_decl(type, to_name(tmp.second), tmp.second),
-		          ";");
+		statement(flags_to_precision_qualifiers_glsl(type, flags), to_varying_qualifiers_ispc(tmp.second),
+		          variable_decl(type, to_name(tmp.second), tmp.second), ";");
 
 		hoisted_temporaries.insert(tmp.second);
 		forced_temporaries.insert(tmp.second);

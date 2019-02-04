@@ -46,6 +46,10 @@ string ensure_valid_identifier(const string &name, bool member);
 // Default assumption is that they are uniform.
 #define DUMP_VARYING_DEPENDANCIES 0
 
+// Enable this to debugbreak on a specific variable ID when debugging varyings.
+#define DEBUG_BREAK_ON_VARYING 0
+#define DEBUG_BREAK_VARYING_ID 1812
+
 void CompilerISPC::emit_buffer_block(const SPIRVariable &var)
 {
 	add_resource_name(var.self);
@@ -85,15 +89,16 @@ void CompilerISPC::emit_shared(const SPIRVariable &var)
 
 void CompilerISPC::emit_uniform(const SPIRVariable &var)
 {
-	add_resource_name(var.self);
+	// Uniforms are passed into ispc through the entrypoint
+	//	add_resource_name(var.self);
 
-	auto &type = get<SPIRType>(var.basetype);
-	auto instance_name = to_name(var.self);
+	//	auto &type = get<SPIRType>(var.basetype);
+	//	auto instance_name = to_name(var.self);
 
-	string type_name = type_to_glsl(type);
-	remap_variable_type_name(type, instance_name, type_name);
+	//	string type_name = type_to_glsl(type);
+	//	remap_variable_type_name(type, instance_name, type_name);
 
-	statement("");
+	//    statement(layout_for_variable(var), CompilerGLSL::variable_decl(var), ";");
 }
 
 void CompilerISPC::emit_push_constant_block(const SPIRVariable &var)
@@ -241,8 +246,6 @@ string CompilerISPC::bitcast_glsl_op(const SPIRType &out_type, const SPIRType &i
 
 void CompilerISPC::emit_resources()
 {
-	vector<string> varyings = { "varying", "uniform" };
-
 	// Output all basic struct types which are not Block or BufferBlock as these are declared inplace
 	// when such variables are instantiated.
 	statement("");
@@ -400,6 +403,7 @@ string CompilerISPC::compile()
 	backend.explicit_struct_type = true;
 	backend.use_initializer_list = true;
 	backend.supports_native_swizzle = false;
+	backend.supports_complex_composite_extraction = false;
 	backend.stdlib_filename = "spirvcross_stdlib.ispc";
 
 	update_active_builtins();
@@ -611,7 +615,7 @@ void CompilerISPC::emit_function_prototype(SPIRFunction &func, const Bitset &)
 	auto &type = get<SPIRType>(func.return_type);
 	decl += "static SPIRV_INLINE ";
 	if (type.basetype != SPIRType::Void)
-		decl += meta[func.self].decoration.ispc_varying ? "varying " : "uniform ";
+		decl += to_varying_qualifiers_ispc(func.self);
 	decl += type_to_glsl(type);
 	decl += " ";
 
@@ -691,6 +695,22 @@ bool CompilerISPC::optimize_read_modify_write(const SPIRType &type, const string
 	return true;
 }
 
+string CompilerISPC::to_varying_qualifiers_ispc(uint32_t id)
+{
+	string base;
+
+	if (meta[id].decoration.ispc_varying)
+		base = "varying ";
+	else
+		base = "uniform ";
+	return base;
+}
+
+string CompilerISPC::to_qualifiers_glsl(uint32_t id)
+{
+	return to_varying_qualifiers_ispc(id);
+}
+
 string CompilerISPC::argument_decl(const SPIRFunction::Parameter &arg)
 {
 	auto &type = expression_type(arg.id);
@@ -711,25 +731,22 @@ string CompilerISPC::argument_decl(const SPIRFunction::Parameter &arg)
 	// arrays get confused if passed by reference
 	string passByRef = type.array.size() ? " " : "& ";
 
-	return join(meta[arg.id].decoration.ispc_varying ? "varying " : "uniform ", constref ? "const " : "", base,
-	            passByRef, variable_name);
+	return join(to_varying_qualifiers_ispc(arg.id), constref ? "const " : "", base, passByRef, variable_name);
 }
 
 string CompilerISPC::variable_decl(const SPIRType &type, const string &name, uint32_t id)
 {
 	string base;
-
+#if 0
 	if (id > 0)
 	{
-		if (meta[id].decoration.ispc_varying)
-			base = "varying ";
-		else
-			base = "uniform ";
-	}
+        base = to_qualifiers_glsl(id);
+    }
 	else
 	{
 		// Should only get in here for struct members etc
 	}
+#endif
 
 	base += type_to_glsl(type, id);
 	remap_variable_type_name(type, name, base);
@@ -1014,6 +1031,31 @@ bool CompilerISPC::maybe_emit_array_assignment(uint32_t id_lhs, uint32_t id_rhs)
 	return true;
 }
 
+bool CompilerISPC::check_scalar_atomic_image(uint32_t id)
+{
+	auto &type = expression_type(id);
+	if (type.storage == StorageClassImage)
+	{
+		auto *var = maybe_get_backing_variable(id);
+		if (var)
+		{
+			auto &flags = meta.at(var->self).decoration.decoration_flags;
+			if (flags.get(DecorationNonWritable) || flags.get(DecorationNonReadable))
+			{
+				flags.clear(DecorationNonWritable);
+				flags.clear(DecorationNonReadable);
+				force_recompile = true;
+			}
+		}
+		if (!type.image.arrayed && ((type.image.dim == Dim1D) || (type.image.dim == DimBuffer)))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
 void CompilerISPC::emit_instruction(const Instruction &instruction)
 {
 	auto ops = stream(instruction);
@@ -1200,9 +1242,9 @@ void CompilerISPC::emit_instruction(const Instruction &instruction)
 	case OpAtomicXor:
 	case OpAtomicExchange:
 	{
-		if (check_atomic_image(ops[2]))
+		if (check_atomic_image(ops[2]) && !check_scalar_atomic_image(ops[2]))
 		{
-			SPIRV_CROSS_THROW("Atomic images not supported for ISPC.");
+			SPIRV_CROSS_THROW("Non Scalar Atomic images not supported for ISPC.");
 		}
 
 		string func;
@@ -1246,12 +1288,106 @@ void CompilerISPC::emit_instruction(const Instruction &instruction)
 		break;
 	}
 
+	case OpImageTexelPointer:
+	{
+		uint32_t result_type = ops[0];
+		uint32_t id = ops[1];
+		auto &e =
+		    set<SPIRExpression>(id, join(to_expression(ops[2]), "[", to_expression(ops[3]), "]"), result_type, true);
+
+		// When using the pointer, we need to know which variable it is actually loaded from.
+		auto *var = maybe_get_backing_variable(ops[2]);
+		e.loaded_from = var ? var->self : 0;
+		break;
+	}
+
 	case OpStore:
+	{
 		if (maybe_emit_array_assignment(ops[0], ops[1]))
 			break;
+#if 0
+        auto &type = expression_type(ops[0]);
 
+        // We're a matrix. Need to do something different as ISPC won't allow arrays to be copied
+        if (type.columns != 1)
+        {
+            auto *p_lhs = maybe_get_backing_variable(ops[0]);
+            if (p_lhs)
+                flush_variable_declaration(p_lhs->self);
+
+            auto lhs = to_expression(ops[0]);
+            auto rhs = to_expression(ops[1]);
+            statement("mat", type.columns, "_copy(", lhs, ", ", rhs, ");");
+            break;
+        }
+#endif
 		CompilerGLSL::emit_instruction(instruction);
 		break;
+	}
+
+	case OpLoad:
+	{
+#if 0
+        uint32_t result_type = ops[0];
+        uint32_t id = ops[1];
+        uint32_t ptr = ops[2];
+
+        const auto ptr_type = expression_type(ptr);
+        if (ptr_type.columns != 1)
+        {
+            flush_variable_declaration(ptr);
+            auto *p_lhs = maybe_get_backing_variable(ops[0]);
+            if (p_lhs)
+                flush_variable_declaration(p_lhs->self);
+
+            auto lhs = to_expression(id);
+
+
+            // If an expression is mutable and forwardable, we speculate that it is immutable.
+            bool forward = should_forward(ptr) && forced_temporaries.find(id) == end(forced_temporaries);
+
+            // If loading a non-native row-major matrix, mark the expression as need_transpose.
+            bool need_transpose = false;
+            bool old_need_transpose = false;
+
+            auto *ptr_expression = maybe_get<SPIRExpression>(ptr);
+            if (ptr_expression && ptr_expression->need_transpose)
+            {
+                old_need_transpose = true;
+                ptr_expression->need_transpose = false;
+                need_transpose = true;
+            }
+            else if (is_non_native_row_major_matrix(ptr))
+                need_transpose = true;
+
+            auto rhs = to_expression(ptr);
+
+            if (ptr_expression)
+                ptr_expression->need_transpose = old_need_transpose;
+
+            // We want to declare the temporary, but not initialise it.
+            // Standard function always puts an assignment operator there
+            // So call the function so it does the right thing with hoisting any temps etc
+            // then just declare it locally.
+            auto temp = declare_temporary(result_type, id);
+            auto &type = get<SPIRType>(result_type);
+            statement(variable_decl(type, to_name(id), id), ";");
+            statement("mat", ptr_type.columns, "_copy(", lhs, ", ", rhs, ");");
+
+            auto expr = set<SPIRExpression>(id, to_name(id), result_type, true);
+            expr.need_transpose = need_transpose;
+            register_read(id, ptr, forward);
+
+            // Pass through whether the result is of a packed type.
+            if (has_decoration(ptr, DecorationCPacked))
+                set_decoration(id, DecorationCPacked);
+
+            break;
+        }
+#endif
+		CompilerGLSL::emit_instruction(instruction);
+		break;
+	}
 
 	// ISPC only sees a pointer for runtime arrays, so the array length needs passing in as 'meta' data.
 	// This is currently done by creating a new global input variable that is passed in via the API.
@@ -1317,6 +1453,7 @@ void CompilerISPC::emit_instruction(const Instruction &instruction)
 			statement("// barrier(); // Not currently supported");
 		break;
 	}
+
 	default:
 		CompilerGLSL::emit_instruction(instruction);
 		break;
@@ -1402,6 +1539,10 @@ bool CompilerISPC::VectorisationHandler::handle(spv::Op opcode, const uint32_t *
 	auto add_dependancies = [&](const uint32_t dst, const uint32_t src) {
 		dependee_hierarchy[src].insert(dst);
 		dependant_hierarchy[dst].insert(src);
+#if DEBUG_BREAK_ON_VARYING
+		if ((src == DEBUG_BREAK_VARYING_ID) || (dst == DEBUG_BREAK_VARYING_ID))
+			__debugbreak();
+#endif
 	};
 
 	switch (opcode)
@@ -1418,13 +1559,17 @@ bool CompilerISPC::VectorisationHandler::handle(spv::Op opcode, const uint32_t *
 			add_dependancies(args[1], args[i]);
 
 			// Access chains need to be 2-way as they are simply indirections.
-			// But, if the src is a global passed in by the user, then we don't as they are always uniform
-			// but perhaps with varying runtime arrays.
+			// If the variable is an array, or a global passed in by the user, then we treat them as uniforms.
+			// This will break with an array of varyings with a varying lookup
 			{
 				auto *var = compiler.maybe_get<SPIRVariable>(args[i]);
 				if (var && var->storage == StorageClassFunction)
 				{
-					add_dependancies(args[i], args[1]);
+					auto &type = compiler.get<SPIRType>(var->basetype);
+					if (!compiler.is_array(type))
+					{
+						add_dependancies(args[i], args[1]);
+					}
 				}
 			}
 
@@ -1706,6 +1851,10 @@ void CompilerISPC::VectorisationHandler::set_current_block(const SPIRBlock &bloc
 // been seeded, so find the varyings and propogate down the dependancy tree
 bool CompilerISPC::VectorisationHandler::propogate_ispc_varyings(const uint32_t var)
 {
+#if DEBUG_BREAK_ON_VARYING
+	if (var == DEBUG_BREAK_VARYING_ID)
+		__debugbreak();
+#endif
 	bool bPropogate = false;
 	auto varIt = dependee_hierarchy.find(var);
 	if (varIt != dependee_hierarchy.end())
@@ -1717,6 +1866,10 @@ bool CompilerISPC::VectorisationHandler::propogate_ispc_varyings(const uint32_t 
 			{
 				if (!compiler.meta[dependantVarIt].decoration.ispc_varying)
 				{
+#if DEBUG_BREAK_ON_VARYING
+					if (dependantVarIt == DEBUG_BREAK_VARYING_ID)
+						__debugbreak();
+#endif
 					compiler.meta[dependantVarIt].decoration.ispc_varying = true;
 					bPropogate = true;
 
@@ -2122,7 +2275,9 @@ void CompilerISPC::find_entry_point_args()
 					entry_point_ids.push_back(&id);
 					break;
 				}
+				case SPIRType::SampledImage:
 				case SPIRType::Image:
+				case SPIRType::Sampler:
 				{
 					entry_point_ids.push_back(&id);
 					break;
@@ -2175,16 +2330,18 @@ string CompilerISPC::entry_point_args(bool append_comma, bool want_builtins, boo
 			{
 			case SPIRType::Struct:
 			{
-				string varying = meta[var_id].decoration.ispc_varying ? "varying " : "uniform ";
 				auto &m = meta.at(type.self);
 				if (m.members.size() == 0)
 					break;
 				if (!ep_args.empty())
 					ep_args += ", ";
-				ep_args += " " + varying + type_to_glsl(type, var_id) + "& " + to_name(var_id);
+				ep_args +=
+				    " " + to_varying_qualifiers_ispc(var_id) + type_to_glsl(type, var_id) + "& " + to_name(var_id);
 				break;
 			}
 			case SPIRType::Image:
+			case SPIRType::Sampler:
+			case SPIRType::SampledImage:
 				if (!ep_args.empty())
 					ep_args += ", ";
 				ep_args += "uniform " + type_to_glsl(type, var_id) + " &" + to_name(var_id);
@@ -2225,18 +2382,20 @@ string CompilerISPC::entry_point_args(bool append_comma, bool want_builtins, boo
 
 			if (add_arg)
 			{
-				string varying = meta[var_id].decoration.ispc_varying ? "varying " : "uniform ";
 				if (!ep_args.empty())
 					ep_args += ", ";
 
 				// Need to ensure that workgroup arrays are passed as pointers/references.
 				// TODO : Ensure these are correctly passed to other functions if required...
 				if (is_array(type))
-					ep_args += varying + type_to_glsl(type, var_id) + "* " + to_expression(var_id);
+					ep_args += to_varying_qualifiers_ispc(var_id) + type_to_glsl(type, var_id) + "* uniform " +
+					           to_expression(var_id);
 				else if (workgroup_var) // Need passing by reference
-					ep_args += varying + type_to_glsl(type, var_id) + "& " + to_expression(var_id);
+					ep_args +=
+					    to_varying_qualifiers_ispc(var_id) + type_to_glsl(type, var_id) + "& " + to_expression(var_id);
 				else
-					ep_args += varying + type_to_glsl(type, var_id) + " " + to_expression(var_id);
+					ep_args +=
+					    to_varying_qualifiers_ispc(var_id) + type_to_glsl(type, var_id) + " " + to_expression(var_id);
 			}
 		}
 	}
@@ -2277,6 +2436,8 @@ string CompilerISPC::entry_point_args_init(bool append_comma)
 				break;
 			}
 			case SPIRType::Image:
+			case SPIRType::Sampler:
+			case SPIRType::SampledImage:
 			{
 				if (!ep_args.empty())
 					ep_args += ", ";
@@ -2510,6 +2671,17 @@ string CompilerISPC::layout_for_member(const SPIRType &, uint32_t)
 	return "";
 }
 
+std::string CompilerISPC::matrix_to_vector(uint32_t index, bool index_is_literal)
+{
+	string expr = ".m[";
+	if (index_is_literal)
+		expr += convert_to_string(index);
+	else
+		expr += to_expression(index);
+	expr += "]";
+	return expr;
+}
+
 //
 // Now for the codegen for the stdlib ISPC include file
 //
@@ -2637,6 +2809,66 @@ void CompilerISPC::codegen_default_image_structs(uint32_t width)
 	statement("");
 }
 
+void CompilerISPC::codegen_default_texture_structs(uint32_t width)
+{
+	std::string texW = join("texture", width, "D");
+	std::string samplerW = join("sampler", width, "D");
+
+	statement("typedef enum spvTextureFilter");
+	begin_scope();
+	statement("SPV_TEXTURE_FILTER_MIN_MAG_MIP_POINT = 0,");
+	end_scope_decl();
+	statement("");
+
+	statement("typedef enum spvTextureAddress");
+	begin_scope();
+	statement("SPV_TEXTURE_ADDRESS_WRAP = 0,");
+	statement("SPV_TEXTURE_ADDRESS_CLAMP,");
+	end_scope_decl();
+	statement("");
+
+	statement("// Separate Sampler");
+	statement("struct sampler");
+	begin_scope();
+	statement("spvTextureFilter filter;");
+	statement("spvTextureAddress addressU;");
+	statement("spvTextureAddress addressV;");
+	end_scope_decl();
+	statement("");
+
+	statement("#define SPV_MAX_MIP_COUNT 12");
+	statement("struct ", texW);
+	begin_scope();
+	statement("unsigned int width;");
+	statement("unsigned int height;");
+	statement("unsigned int numComponents;");
+	statement("unsigned int mipCount;");
+	statement("float *mips[SPV_MAX_MIP_COUNT]; // 12 mips supports upto 2k textures");
+	end_scope_decl();
+	statement("");
+
+	statement("// Combined Image Sampler");
+	statement("struct ", samplerW);
+	begin_scope();
+	statement("sampler s;");
+	statement(texW, " t;");
+	end_scope_decl();
+	statement("");
+
+	statement("// Combined Image Sampler Constructor");
+	statement("uniform ", samplerW, " ", samplerW, "_init(uniform ", texW, " &t, uniform sampler &s)");
+	begin_scope();
+	statement("uniform ", samplerW, " samplerW = { s, t };");
+	statement("return samplerW;");
+	end_scope_decl();
+	statement("");
+	statement("#define ", samplerW, "Shadow(...) ", samplerW, "_init(__VA_ARGS__)");
+	statement("#define ", samplerW, "(...) ", samplerW, "_init(__VA_ARGS__)");
+	statement("");
+
+	statement("");
+}
+
 void CompilerISPC::codegen_constructor(std::string type, bool varying, uint32_t width, uint32_t arg_count,
                                        uint32_t arg_width[4])
 {
@@ -2699,6 +2931,78 @@ void CompilerISPC::codegen_constructor(std::string type, bool varying, uint32_t 
 		          " ret = { ", init, " }; return ret; }");
 	}
 }
+
+#if 1
+void CompilerISPC::codegen_matrix_constructor(std::string type, bool varying)
+{
+	std::vector<string> vector_names = { "varying ", "uniform " };
+	std::string v = vector_names[varying ? 0 : 1];
+
+	// variant 1 = pass in a single float - this is placed across the diagonal in an identity matrix
+	statement("static SPIRV_INLINE ", v, "mat3 mat3_init(const ", v, " float a)");
+	begin_scope();
+	statement(v, " mat3 mat;");
+	statement("mat.m[0] = float3_init(a, 0.0f, 0.0f);");
+	statement("mat.m[1] = float3_init(0.0f, a, 0.0f);");
+	statement("mat.m[2] = float3_init(0.0f, 0.0f, a);");
+	statement("return mat;");
+	end_scope();
+	statement("");
+
+	statement("static SPIRV_INLINE ", v, "mat4 mat4_init(const ", v, " float a)");
+	begin_scope();
+	statement(v, " mat4 mat;");
+	statement("mat.m[0] = float4_init(a, 0.0f, 0.0f, 0.0f);");
+	statement("mat.m[1] = float4_init(0.0f, a, 0.0f, 0.0f);");
+	statement("mat.m[2] = float4_init(0.0f, 0.0f, a, 0.0f);");
+	statement("mat.m[3] = float4_init(0.0f, 0.0f, 0.0f, a);");
+	statement("return mat;");
+	end_scope();
+	statement("");
+
+	// variant 2 = pass in vectors
+	statement("static SPIRV_INLINE ", v, "mat3 mat3_init(const ", v, " float3& a, const ", v, " float3& b, const ", v,
+	          " float3& c)");
+	begin_scope();
+	statement(v, " mat3 mat;");
+	statement("mat.m[0] = a;");
+	statement("mat.m[1] = b;");
+	statement("mat.m[2] = c;");
+	statement("return mat;");
+	end_scope();
+	statement("");
+
+	statement("static SPIRV_INLINE ", v, "mat4 mat4_init(const ", v, " float4& a, const ", v, " float4& b, const ", v,
+	          " float4& c, const ", v, " float4& d)");
+	begin_scope();
+	statement(v, " mat4 mat;");
+	statement("mat.m[0] = a;");
+	statement("mat.m[1] = b;");
+	statement("mat.m[2] = c;");
+	statement("mat.m[3] = d;");
+	statement("return mat;");
+	end_scope();
+	statement("");
+
+	// variant 3 = copy - done this way as ISPC won't allow arrays to be copied
+	statement("static SPIRV_INLINE void mat3_copy(", v, " mat3& lhs, const ", v, " mat3& rhs)");
+	begin_scope();
+	statement("lhs.m[0] = rhs.m[0];");
+	statement("lhs.m[1] = rhs.m[1];");
+	statement("lhs.m[2] = rhs.m[2];");
+	end_scope();
+	statement("");
+
+	statement("static SPIRV_INLINE void mat4_copy(", v, " mat4& lhs, const ", v, " mat4& rhs)");
+	begin_scope();
+	statement("lhs.m[0] = rhs.m[0];");
+	statement("lhs.m[1] = rhs.m[1];");
+	statement("lhs.m[2] = rhs.m[2];");
+	statement("lhs.m[3] = rhs.m[3];");
+	end_scope();
+	statement("");
+}
+#endif
 
 void CompilerISPC::codegen_cast_constructor(std::string src_type, std::string dst_type, bool varying, uint32_t width)
 {
@@ -3144,6 +3448,360 @@ void CompilerISPC::codegen_binary_op(
 	}
 };
 
+// varyings/vector widths are : return, arg1, arg2
+void CompilerISPC::codegen_matrix_multiply(uint32_t dim, std::vector<std::vector<std::string>> &varyings)
+{
+	auto mat_mul_col = [&](const uint32_t dim, const uint32_t col) {
+		std::vector<string> rows = { "x", "y", "z", "w" };
+
+		auto str = join("ret.m[" + convert_to_string(col) +
+		                "] = "
+		                "lhs.m[0] * rhs.m[" +
+		                convert_to_string(col) + "]." + rows[0] + " + lhs.m[1] * rhs.m[" + convert_to_string(col) +
+		                "]." + rows[1]);
+		if (dim > 2)
+			str += join(" + lhs.m[2] * rhs.m[" + convert_to_string(col) + "]." + rows[2]);
+		if (dim > 3)
+			str += join(" + lhs.m[3] * rhs.m[" + convert_to_string(col) + "]." + rows[3]);
+		str += ";";
+		statement(str);
+	};
+
+	statement("");
+	statement("//////////////////////////////");
+	auto str = join(convert_to_string(dim) + "x" + convert_to_string(dim));
+	statement("// Matrix Multiply " + str);
+	statement("//////////////////////////////");
+	statement("");
+
+	auto matN = join("mat" + convert_to_string(dim));
+
+	for (auto &v : varyings)
+	{
+		statement("static SPIRV_INLINE " + v[0] + " " + matN + " operator*(" + v[1] + " " + matN + " &lhs, " + v[2] +
+		          " " + matN + " &rhs)");
+		begin_scope();
+		statement(v[0] + " " + matN + " ret;");
+		for (uint32_t col = 0; col < dim; col++)
+		{
+			mat_mul_col(dim, col);
+		}
+		statement("return ret;");
+		end_scope();
+		statement("");
+	}
+}
+
+// Inverse
+void CompilerISPC::codegen_matrix_inverse(std::string &varying)
+{
+	statement("");
+	statement("//////////////////////////////");
+	statement("// Matrix Inverse ");
+	statement("//////////////////////////////");
+	statement("");
+
+	statement("// Returns the determinant of a 2x2 matrix.");
+	statement("static SPIRV_INLINE " + varying + " float determinantMat2(" + varying + " float a1, " + varying +
+	          " float a2, " + varying + " float b1, " + varying + " float b2)");
+	begin_scope();
+	statement("return a1 * b2 - b1 * a2;");
+	end_scope();
+	statement("");
+
+	statement("// Returns the determinant of a 3x3 matrix.");
+	statement("static SPIRV_INLINE " + varying + " float determinantMat3(" + varying + " float a1, " + varying +
+	          " float a2, " + varying + " float a3, " + varying + " float b1, " + varying + " float b2, " + varying +
+	          " float b3, " + varying + " float c1, " + varying + " float c2, " + varying + " float c3)");
+	begin_scope();
+	statement("return a1 * determinantMat2(b2, b3, c2, c3) - b1 * determinantMat2(a2, a3, c2, c3) + c1 * "
+	          "determinantMat2(a2, a3, "
+	          "b2, b3);");
+	end_scope();
+	statement("");
+	statement("// Returns the inverse of a matrix, by using the algorithm of calculating the classical");
+	statement("// adjoint and dividing by the determinant. The contents of the matrix are changed.");
+	statement("static SPIRV_INLINE " + varying + " mat4 inverse(" + varying + " mat4 m)");
+	begin_scope();
+	statement(varying + " mat4 adj;	// The adjoint matrix (inverse after dividing by determinant)");
+	statement_no_indent("");
+	statement("// Create the transpose of the cofactors, as the classical adjoint of the matrix.");
+	statement(
+	    "adj.m[0].x =  determinantMat3(m.m[1].y, m.m[1].z, m.m[1].w, m.m[2].y, m.m[2].z, m.m[2].w, m.m[3].y, m.m[3].z, "
+	    "m.m[3].w);");
+	statement(
+	    "adj.m[0].y = -determinantMat3(m.m[0].y, m.m[0].z, m.m[0].w, m.m[2].y, m.m[2].z, m.m[2].w, m.m[3].y, m.m[3].z, "
+	    "m.m[3].w);");
+	statement(
+	    "adj.m[0].z =  determinantMat3(m.m[0].y, m.m[0].z, m.m[0].w, m.m[1].y, m.m[1].z, m.m[1].w, m.m[3].y, m.m[3].z, "
+	    "m.m[3].w);");
+	statement(
+	    "adj.m[0].w = -determinantMat3(m.m[0].y, m.m[0].z, m.m[0].w, m.m[1].y, m.m[1].z, m.m[1].w, m.m[2].y, m.m[2].z, "
+	    "m.m[2].w);");
+	statement_no_indent("");
+	statement(
+	    "adj.m[1].x = -determinantMat3(m.m[1].x, m.m[1].z, m.m[1].w, m.m[2].x, m.m[2].z, m.m[2].w, m.m[3].x, m.m[3].z, "
+	    "m.m[3].w);");
+	statement(
+	    "adj.m[1].y =  determinantMat3(m.m[0].x, m.m[0].z, m.m[0].w, m.m[2].x, m.m[2].z, m.m[2].w, m.m[3].x, m.m[3].z, "
+	    "m.m[3].w);");
+	statement(
+	    "adj.m[1].z = -determinantMat3(m.m[0].x, m.m[0].z, m.m[0].w, m.m[1].x, m.m[1].z, m.m[1].w, m.m[3].x, m.m[3].z, "
+	    "m.m[3].w);");
+	statement(
+	    "adj.m[1].w =  determinantMat3(m.m[0].x, m.m[0].z, m.m[0].w, m.m[1].x, m.m[1].z, m.m[1].w, m.m[2].x, m.m[2].z, "
+	    "m.m[2].w);");
+	statement_no_indent("");
+	statement(
+	    "adj.m[2].x =  determinantMat3(m.m[1].x, m.m[1].y, m.m[1].w, m.m[2].x, m.m[2].y, m.m[2].w, m.m[3].x, m.m[3].y, "
+	    "m.m[3].w);");
+	statement(
+	    "adj.m[2].y = -determinantMat3(m.m[0].x, m.m[0].y, m.m[0].w, m.m[2].x, m.m[2].y, m.m[2].w, m.m[3].x, m.m[3].y, "
+	    "m.m[3].w);");
+	statement(
+	    "adj.m[2].z =  determinantMat3(m.m[0].x, m.m[0].y, m.m[0].w, m.m[1].x, m.m[1].y, m.m[1].w, m.m[3].x, m.m[3].y, "
+	    "m.m[3].w);");
+	statement(
+	    "adj.m[2].w = -determinantMat3(m.m[0].x, m.m[0].y, m.m[0].w, m.m[1].x, m.m[1].y, m.m[1].w, m.m[2].x, m.m[2].y, "
+	    "m.m[2].w);");
+	statement_no_indent("");
+	statement(
+	    "adj.m[3].x = -determinantMat3(m.m[1].x, m.m[1].y, m.m[1].z, m.m[2].x, m.m[2].y, m.m[2].z, m.m[3].x, m.m[3].y, "
+	    "m.m[3].z);");
+	statement(
+	    "adj.m[3].y =  determinantMat3(m.m[0].x, m.m[0].y, m.m[0].z, m.m[2].x, m.m[2].y, m.m[2].z, m.m[3].x, m.m[3].y, "
+	    "m.m[3].z);");
+	statement(
+	    "adj.m[3].z = -determinantMat3(m.m[0].x, m.m[0].y, m.m[0].z, m.m[1].x, m.m[1].y, m.m[1].z, m.m[3].x, m.m[3].y, "
+	    "m.m[3].z);");
+	statement(
+	    "adj.m[3].w =  determinantMat3(m.m[0].x, m.m[0].y, m.m[0].z, m.m[1].x, m.m[1].y, m.m[1].z, m.m[2].x, m.m[2].y, "
+	    "m.m[2].z);");
+	statement_no_indent("");
+	statement("// Calculate the determinant as a combination of the cofactors of the first row.");
+	statement(varying +
+	          " float det = (adj.m[0].x * m.m[0].x) + (adj.m[0].y * m.m[1].x) + (adj.m[0].z * m.m[2].x) + (adj.m[0].w "
+	          "* m.m[3].x);");
+	statement_no_indent("");
+	statement("// Divide the classical adjoint matrix by the determinant.");
+	statement("// If determinant is zero, matrix is not invertable, so leave it unchanged.");
+	statement("return (det != 0.0f) ? adj * (1.0f / det) : m;");
+	end_scope();
+	statement("");
+
+	statement("// Returns the inverse of a matrix, by using the algorithm of calculating the classical");
+	statement("// adjoint and dividing by the determinant. The contents of the matrix are changed.");
+	statement("static SPIRV_INLINE " + varying + " mat3 inverse(" + varying + " mat3 m)");
+	begin_scope();
+	statement(varying + " mat3 adj;	// The adjoint matrix (inverse after dividing by determinant)");
+	statement_no_indent("");
+	statement("// Create the transpose of the cofactors, as the classical adjoint of the matrix.");
+	statement("adj.m[0].x =  determinantMat2(m.m[1].y, m.m[1].z, m.m[2].y, m.m[2].z);");
+	statement("adj.m[0].y = -determinantMat2(m.m[0].y, m.m[0].z, m.m[2].y, m.m[2].z);");
+	statement("adj.m[0].z =  determinantMat2(m.m[0].y, m.m[0].z, m.m[1].y, m.m[1].z);");
+	statement_no_indent("");
+	statement("adj.m[1].x = -determinantMat2(m.m[1].x, m.m[1].z, m.m[2].x, m.m[2].z);");
+	statement("adj.m[1].y =  determinantMat2(m.m[0].x, m.m[0].z, m.m[2].x, m.m[2].z);");
+	statement("adj.m[1].z = -determinantMat2(m.m[0].x, m.m[0].z, m.m[1].x, m.m[1].z);");
+	statement_no_indent("");
+	statement("adj.m[2].x =  determinantMat2(m.m[1].x, m.m[1].y, m.m[2].x, m.m[2].y);");
+	statement("adj.m[2].y = -determinantMat2(m.m[0].x, m.m[0].y, m.m[2].x, m.m[2].y);");
+	statement("adj.m[2].z =  determinantMat2(m.m[0].x, m.m[0].y, m.m[1].x, m.m[1].y);");
+	statement_no_indent("");
+	statement("// Calculate the determinant as a combination of the cofactors of the first row.");
+	statement(varying + " float det = (adj.m[0].x * m.m[0].x) + (adj.m[0].y * m.m[1].x) + (adj.m[0].z * m.m[2].x);");
+	statement_no_indent("");
+	statement("// Divide the classical adjoint matrix by the determinant.");
+	statement("// If determinant is zero, matrix is not invertable, so leave it unchanged.");
+	statement("return (det != 0.0f) ? adj * (1.0f / det) : m;");
+	end_scope();
+	statement("");
+}
+
+// varyings/vector widths are : return, arg1, arg2
+void CompilerISPC::codegen_matrix_transpose(uint32_t dim, std::vector<std::vector<std::string>> &varyings)
+{
+	auto mat_trans_col_row = [&](const uint32_t dim, const uint32_t col, const uint32_t row) {
+		std::vector<string> rows = { "x", "y", "z", "w" };
+		auto str = join("ret.m[" + convert_to_string(col) + "] = float" + convert_to_string(dim) + "(rhs.m[0]." +
+		                rows[row] + ", rhs.m[1]." + rows[row]);
+		if (dim > 2)
+			str += join(", rhs.m[2]." + rows[row]);
+		if (dim > 3)
+			str += join(", rhs.m[3]." + rows[row]);
+		str += ");";
+		statement(str);
+	};
+
+	statement("");
+	statement("//////////////////////////////");
+	auto str = join(convert_to_string(dim) + "x" + convert_to_string(dim));
+	statement("// Matrix Transpose " + str);
+	statement("//////////////////////////////");
+	statement("");
+
+	auto matN = join("mat" + convert_to_string(dim));
+
+	for (auto &v : varyings)
+	{
+		statement("static SPIRV_INLINE " + v[0] + " " + matN + " transpose(" + v[1] + " " + matN + " &rhs)");
+		begin_scope();
+		statement(v[0] + " " + matN + " ret;");
+		for (uint32_t col = 0; col < dim; col++)
+		{
+			mat_trans_col_row(dim, col, col);
+		}
+		statement("return ret;");
+		end_scope();
+		statement("");
+	}
+}
+
+// varyings/vector widths are : return, arg1, arg2
+void CompilerISPC::codegen_matrix_times_scalar(uint32_t dim, std::vector<std::vector<std::string>> &varyings)
+{
+	auto mat_times_scalar_col = [&](const uint32_t dim, const uint32_t col, const uint32_t row) {
+		std::vector<string> rows = { "x", "y", "z", "w" };
+		auto str = join("ret.m[" + convert_to_string(col) + "] = lhs.m[" + convert_to_string(col) + "] * rhs;");
+		statement(str);
+	};
+	auto scalar_times_mat_col = [&](const uint32_t dim, const uint32_t col, const uint32_t row) {
+		std::vector<string> rows = { "x", "y", "z", "w" };
+		auto str = join("ret.m[" + convert_to_string(col) + "] = rhs.m[" + convert_to_string(col) + "] * lhs;");
+		statement(str);
+	};
+
+	statement("");
+	statement("//////////////////////////////");
+	auto str = join(convert_to_string(dim) + "x" + convert_to_string(dim));
+	statement("// Matrix Times Scalar " + str);
+	statement("//////////////////////////////");
+	statement("");
+
+	auto matN = join("mat" + convert_to_string(dim));
+
+	for (auto &v : varyings)
+	{
+		statement("static SPIRV_INLINE " + v[0] + " " + matN + " operator*(" + v[1] + " " + matN + " &lhs, " + v[2] +
+		          " float &rhs)");
+		begin_scope();
+		statement(v[0] + " " + matN + " ret;");
+		for (uint32_t col = 0; col < dim; col++)
+		{
+			mat_times_scalar_col(dim, col, col);
+		}
+		statement("return ret;");
+		end_scope();
+		statement("");
+
+		statement("static SPIRV_INLINE " + v[0] + " " + matN + " operator*(" + v[1] + " float &lhs, " + v[2] + " " +
+		          matN + " &rhs)");
+		begin_scope();
+		statement(v[0] + " " + matN + " ret;");
+		for (uint32_t col = 0; col < dim; col++)
+		{
+			scalar_times_mat_col(dim, col, col);
+		}
+		statement("return ret;");
+		end_scope();
+		statement("");
+	}
+}
+
+// varyings/vector widths are : return, arg1, arg2
+void CompilerISPC::codegen_vector_times_matrix(uint32_t dim, std::vector<std::vector<std::string>> &varyings)
+{
+	// Assume column major matrices and row vectors
+	//
+	//               | a, d, g |
+	// | x, y, z | x | b, e, h | = | dot(mat[0], vec), dot(mat[1], vec), dot(mat[2], vec) |
+	//               | c, f, i |
+	//
+	//
+	statement("");
+	statement("////////////////////////////////////////");
+	auto str = join(convert_to_string(dim) + "x" + convert_to_string(dim));
+	statement("// Row Vector Times Column Matrix " + str);
+	statement("////////////////////////////////////////");
+	statement("");
+
+	auto floatN = join("float" + convert_to_string(dim));
+	auto matN = join("mat" + convert_to_string(dim));
+
+	for (auto &v : varyings)
+	{
+		statement("static SPIRV_INLINE " + v[0] + " " + floatN + " operator*(" + v[1] + " " + floatN + " &lhs, " +
+		          v[2] + " " + matN + " &rhs)");
+		begin_scope();
+		statement(v[0] + " " + floatN + " ret;");
+
+		string str = "ret = " + floatN + "(";
+		for (uint32_t c = 0; c < dim; c++)
+		{
+			str += " dot(lhs, rhs.m[" + convert_to_string(c) + "])";
+			if (c < (dim - 1))
+				str += ",";
+		}
+		str += ");";
+		statement(str);
+		statement("return ret;");
+		end_scope();
+		statement("");
+	}
+}
+
+// varyings/vector widths are : return, arg1, arg2
+void CompilerISPC::codegen_matrix_times_vector(uint32_t dim, std::vector<std::vector<std::string>> &varyings)
+{
+	// Assume column major matrices and column vectors
+	//
+	// | a, d, g |   | x |   | dot(float3(a, d, g), vec) |
+	// | b, e, h | x | y | = | dot(float3(b, e, h), vec) |
+	// | c, f, i |   | z |   | dot(float3(c, f, i), vec) |
+	//
+	//
+	auto mat_times_vec_row = [&](const uint32_t dim, const uint32_t row) {
+		std::vector<string> rows = { "x", "y", "z", "w" };
+
+		string dotp = "dot(float" + convert_to_string(dim) + "(";
+		for (uint32_t c = 0; c < dim; c++)
+		{
+			dotp += " lhs.m[" + convert_to_string(c) + "]." + rows[row];
+			if (c < (dim - 1))
+				dotp += ",";
+		}
+		dotp += " ), rhs );";
+
+		auto str = join("ret." + rows[row] + " = " + dotp);
+		statement(str);
+	};
+
+	statement("");
+	statement("////////////////////////////////////////////");
+	auto str = join(convert_to_string(dim) + "x" + convert_to_string(dim));
+	statement("// Column Matrix Times Column Vector " + str);
+	statement("////////////////////////////////////////////");
+	statement("");
+
+	auto floatN = join("float" + convert_to_string(dim));
+	auto matN = join("mat" + convert_to_string(dim));
+
+	for (auto &v : varyings)
+	{
+		statement("static SPIRV_INLINE " + v[0] + " " + floatN + " operator*(" + v[1] + " " + matN + " &lhs, " + v[2] +
+		          " " + floatN + " &rhs)");
+		begin_scope();
+		statement(v[0] + " " + floatN + " ret;");
+		for (uint32_t row = 0; row < dim; row++)
+		{
+			mat_times_vec_row(dim, row);
+		}
+		statement("return ret;");
+		end_scope();
+		statement("");
+	}
+}
+
 void CompilerISPC::emit_stdlib()
 {
 	statement("//////////////////////////////");
@@ -3159,9 +3817,6 @@ void CompilerISPC::emit_stdlib()
 	statement("//////////////////////////////");
 	statement("// Default Types");
 	statement("//////////////////////////////");
-	statement("typedef float mat3[3][3];");
-	statement("typedef float mat4[4][4];");
-
 	for (const string &t : std::vector<string>{ "float", "int", "bool" })
 	{
 		for (const uint32_t &w : std::vector<uint32_t>{ 1, 2, 3, 4 })
@@ -3169,6 +3824,14 @@ void CompilerISPC::emit_stdlib()
 			codegen_default_structs(t, w);
 		}
 	}
+	statement("struct mat3 { float3 m[3]; };");
+	statement("struct mat4 { float4 m[4]; };");
+	statement("");
+	statement("typedef int uimageBuffer[]; // not supporting unsigned for now");
+	statement("typedef int imageBuffer[];");
+	statement("typedef int uimage1D[];     // not supporting unsigned for now");
+	statement("typedef int image1D[];");
+
 	statement("");
 
 	statement("//////////////////////////////");
@@ -3176,6 +3839,13 @@ void CompilerISPC::emit_stdlib()
 	statement("//////////////////////////////");
 	codegen_default_pixel_structs(4);
 	codegen_default_image_structs(2);
+
+	statement("");
+
+	statement("//////////////////////////////");
+	statement("// Default Texture Types");
+	statement("//////////////////////////////");
+	codegen_default_texture_structs(2);
 
 	// These provide us with some simple codegen to cast uniforms to varyings.
 	// Is a no-op when casting a varying to a varying.
@@ -3267,7 +3937,21 @@ void CompilerISPC::emit_stdlib()
 			statement("#define ", t, w, "(...) ", t, w, "_init(__VA_ARGS__)");
 		statement("");
 	}
+#if 1
+	for (const string &t : std::vector<string>{ "float" })
+	{
+		for (const bool &v : std::vector<bool>{ true, false })
+		{
+			codegen_matrix_constructor(t, v);
+		}
+	}
 
+	statement("");
+	statement("#define mat3(...) mat3_init(__VA_ARGS__)");
+	statement("#define mat4(...) mat4_init(__VA_ARGS__)");
+	statement("");
+
+#endif
 	statement("");
 	statement("//////////////////////////////");
 	statement("// Default Operators");
@@ -3672,7 +4356,6 @@ void CompilerISPC::emit_stdlib()
 	}
 
 	// Images
-	// Currently implemented assumed atomic buffer counters. Probably needs work for non buffer based atomics
 	{
 		statement("");
 		statement("//////////////////////////////");
@@ -3719,5 +4402,124 @@ void CompilerISPC::emit_stdlib()
 		statement("return ret;");
 		end_scope();
 		statement("");
+	}
+
+	// Texture Support
+	{
+		statement("");
+		statement("//////////////////////////////");
+		statement("// Texture Load");
+		statement("//////////////////////////////");
+		statement("");
+		statement("static SPIRV_INLINE varying float4 textureLod(uniform texture2D &tex, uniform sampler &samp, "
+		          "varying float2 uv, varying int mip)");
+		begin_scope();
+		statement("varying float4 ret = float4(0.0);");
+		statement("if (mip >= tex.mipCount)");
+		statement("    return ret;");
+		statement("");
+		statement("varying int wi = tex.width >> mip;");
+		statement("varying int hi = tex.height >> mip;");
+		statement("varying float w = (float)wi;");
+		statement("varying float h = (float)hi;");
+		statement("");
+		statement("uv = uv * float2(w, h);// + float2(0.5);");
+		statement("");
+		statement(" // Wrap - others not yet supported");
+		statement("if (samp.addressU == SPV_TEXTURE_ADDRESS_WRAP)");
+		statement("    uv.x = mod(uv.x, w);");
+		statement("// Clamp");
+		statement("else if (samp.addressU == SPV_TEXTURE_ADDRESS_CLAMP)");
+		statement("    uv.x = clamp(uv.x, 0.0f, w-1);");
+		statement("");
+		statement("if (samp.addressV == SPV_TEXTURE_ADDRESS_WRAP)");
+		statement("    uv.y = mod(uv.y, h);");
+		statement("else if (samp.addressV == SPV_TEXTURE_ADDRESS_CLAMP)");
+		statement("    uv.y = clamp(uv.y, 0.0f, h-1);");
+		statement("");
+		statement("");
+		statement("varying int index = tex.numComponents * (trunc(uv.y) * wi + trunc(uv.x));");
+		statement("");
+		statement("// --opt=fast-math can cause rounding issues here (especially when incoming tex coord is 1.0), so "
+		          "clamp to buffer size");
+		statement("index = index % (wi * hi);");
+		statement("");
+		statement("foreach_unique(ii in mip)");
+		begin_scope();
+		statement("switch (tex.numComponents)");
+		begin_scope();
+		statement("case 1: ret = float4(tex.mips[ii][index + 0], 0.0, 0.0, 0.0); break;");
+		statement("case 2: ret = float4(tex.mips[ii][index + 0], tex.mips[ii][index + 1], 0.0, 0.0); break;");
+		statement("case 3: ret = float4(tex.mips[ii][index + 0], tex.mips[ii][index + 1], tex.mips[ii][index + 2], "
+		          "0.0); break;");
+		statement("case 4: ret = float4(tex.mips[ii][index + 0], tex.mips[ii][index + 1], tex.mips[ii][index + 2], "
+		          "tex.mips[ii][index + 3]); break;");
+		end_scope();
+		end_scope();
+		statement("");
+		statement("return ret;");
+		end_scope();
+		statement("");
+		statement("static SPIRV_INLINE varying float4 texture(uniform texture2D &tex, uniform sampler &samp, varying "
+		          "float2 uv)");
+		begin_scope();
+		statement("return textureLod(tex, samp, uv, 0);");
+		end_scope();
+		statement("");
+		statement("static SPIRV_INLINE varying float4 textureLod(uniform sampler2D &combinedSampler, varying float2 "
+		          "uv, varying int mip)");
+		begin_scope();
+		statement("return textureLod(combinedSampler.t, combinedSampler.s, uv, mip);");
+		end_scope();
+		statement(
+		    "static SPIRV_INLINE varying float4 textureLod(uniform sampler2D &combinedSampler, varying float2 uv)");
+		begin_scope();
+		statement("return textureLod(combinedSampler.t, combinedSampler.s, uv, 0);");
+		end_scope();
+	}
+
+	//
+	// Unary Matrix ops
+	//
+	{
+
+		vector<vector<string>> default_varying = {
+			{ "varying", "varying" },
+			{ "uniform", "uniform" },
+		};
+
+		codegen_matrix_transpose(3, default_varying);
+		codegen_matrix_transpose(4, default_varying);
+	}
+
+	//
+	// Binary Matrix ops
+	//
+	{
+
+		vector<vector<string>> default_varying = {
+			{ "varying", "varying", "varying" },
+			{ "varying", "varying", "uniform" },
+			{ "varying", "uniform", "varying" },
+			{ "uniform", "uniform", "uniform" },
+		};
+
+		codegen_matrix_multiply(3, default_varying);
+		codegen_matrix_multiply(4, default_varying);
+
+		codegen_matrix_times_scalar(3, default_varying);
+		codegen_matrix_times_scalar(4, default_varying);
+
+		codegen_vector_times_matrix(3, default_varying);
+		codegen_vector_times_matrix(4, default_varying);
+
+		codegen_matrix_times_vector(3, default_varying);
+		codegen_matrix_times_vector(4, default_varying);
+	}
+
+	// Inverse - requires some of the other functions to be defined
+	{
+		codegen_matrix_inverse(string("uniform"));
+		codegen_matrix_inverse(string("varying"));
 	}
 }
