@@ -129,7 +129,7 @@ protected:
 		};
 		std::vector<conditional_block_tracker *> condition_block_stack;
 	};
-    std::string matrix_to_vector(uint32_t index, bool index_is_literal) override;
+	std::string matrix_to_vector(uint32_t index, bool index_is_literal) override;
 
 private:
 	void emit_header() override;
@@ -157,13 +157,13 @@ private:
 	void emit_workgroup_variables();
 
 	bool maybe_emit_array_assignment(uint32_t id_lhs, uint32_t id_rhs);
-    bool check_scalar_atomic_image(uint32_t id);
+	bool check_scalar_atomic_image(uint32_t id);
 
 	std::string variable_decl(const SPIRType &type, const std::string &name, uint32_t id) override;
 
-    std::string to_qualifiers_glsl(uint32_t id) override;
-    std::string to_varying_qualifiers_ispc(uint32_t id) override;
-    std::string argument_decl(const SPIRFunction::Parameter &arg) override;
+	std::string to_qualifiers_glsl(uint32_t id) override;
+	std::string to_varying_qualifiers_ispc(uint32_t id) override;
+	std::string argument_decl(const SPIRFunction::Parameter &arg) override;
 	std::string type_to_glsl(const SPIRType &type, uint32_t id = 0) override;
 	std::string type_to_glsl_constructor(const SPIRType &type) override;
 	std::string bitcast_glsl_op(const SPIRType &result_type, const SPIRType &argument_type) override;
@@ -211,13 +211,13 @@ private:
 	// stdlib codegen
 	void codegen_constructor(std::string type, bool varying, uint32_t width, uint32_t arg_count, uint32_t arg_width[4]);
 	void codegen_cast_constructor(std::string src_type, std::string dst_type, bool varying, uint32_t width);
-    void codegen_matrix_constructor(std::string type, bool varying);
+	void codegen_matrix_constructor(std::string type, bool varying);
 	void codegen_load_op(std::string type, uint32_t width);
 	void codegen_store_op(std::string type, uint32_t width);
 	void codegen_default_structs(std::string type, uint32_t width);
 	void codegen_default_image_structs(uint32_t width);
 	void codegen_default_pixel_structs(uint32_t width);
-    void codegen_default_texture_structs(uint32_t width);
+	void codegen_default_texture_structs(uint32_t width);
 	void codegen_default_binary_op(std::string type, uint32_t width, std::string op);
 
 	void codegen_unary_float_op(
@@ -274,14 +274,12 @@ private:
 	                       const std::function<void(std::vector<std::string> varyings, std::vector<std::string> types,
 	                                                uint32_t vector_width)> &func);
 
-    void codegen_matrix_multiply(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
-    void codegen_matrix_transpose(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
-    void codegen_matrix_times_scalar(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
-    void codegen_vector_times_matrix(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
-    void codegen_matrix_times_vector(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
-    void codegen_matrix_inverse(std::string &varying);
-
-
+	void codegen_matrix_multiply(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
+	void codegen_matrix_transpose(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
+	void codegen_matrix_times_scalar(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
+	void codegen_vector_times_matrix(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
+	void codegen_matrix_times_vector(uint32_t dim, std::vector<std::vector<std::string>> &varyings);
+	void codegen_matrix_inverse(std::string &varying);
 };
 } // namespace spirv_cross
 
