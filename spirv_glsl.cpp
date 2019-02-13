@@ -2969,7 +2969,9 @@ string CompilerGLSL::constant_expression_vector(const SPIRConstant &c, uint32_t 
 	string res;
 	bool splat = backend.use_constructor_splatting && c.vector_size() > 1;
 	bool swizzle_splat = backend.can_swizzle_scalar && c.vector_size() > 1;
+	// BEGIN INTEL
 	bool is_ispc_varying = meta[c.self].decoration.ispc_varying;
+	// END INTEL
 
 	if (!type_is_floating_point(type))
 	{
@@ -3020,12 +3022,14 @@ string CompilerGLSL::constant_expression_vector(const SPIRConstant &c, uint32_t 
 		}
 	}
 
+	// BEGIN INTEL
 	// This ISPC code should not be in the GLSL compiler, but this function was sufficiently complex enough that
 	// it warranted making the small mod here rather than copying the function. Could abstract into some form of vector qualifier...?
 	if (is_ispc_varying && !(splat || swizzle_splat))
 	{
 		res += join("(varying ", type_to_glsl(type, 0), ")");
 	}
+	// END INTEL
 
 	if (c.vector_size() > 1 && !swizzle_splat)
 		res += type_to_glsl(type) + "(";
@@ -3275,8 +3279,10 @@ string CompilerGLSL::declare_temporary(uint32_t result_type, uint32_t result_id)
 	{
 		// The result_id has not been made into an expression yet, so use flags interface.
 		add_local_variable_name(result_id);
+		// BEGIN INTEL - Add ISPC varying qualifiers
 		return join(flags_to_precision_qualifiers_glsl(type, flags), to_varying_qualifiers_ispc(result_id),
 		            variable_decl(type, to_name(result_id), result_id), " = ");
+		// END INTEL
 	}
 }
 
@@ -5142,6 +5148,7 @@ const char *CompilerGLSL::index_to_swizzle(uint32_t index)
 	}
 }
 
+// BEGIN INTEL - ISPC requires a further dereference to access a vector from a matrix
 std::string CompilerGLSL::matrix_to_vector(uint32_t index, bool index_is_literal)
 {
 	string expr = "[";
@@ -5152,6 +5159,7 @@ std::string CompilerGLSL::matrix_to_vector(uint32_t index, bool index_is_literal
 	expr += "]";
 	return expr;
 }
+// END INTEL
 
 string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indices, uint32_t count,
                                            bool index_is_literal, bool chain_only, bool *need_transpose,
@@ -5320,7 +5328,9 @@ string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indice
 				is_packed = false;
 			}
 
+			// BEGIN INTEL
 			expr += matrix_to_vector(index, index_is_literal);
+			// END INTEL
 
 			type_id = type->parent_type;
 			type = &get<SPIRType>(type_id);
@@ -5975,8 +5985,10 @@ string CompilerGLSL::build_composite_combiner(uint32_t return_type, const uint32
 
 	// Can only merge swizzles for vectors.
 	auto &type = get<SPIRType>(return_type);
+	// BEGIN INTEL - not all compilers support native swizzle
 	bool can_apply_swizzle_opt =
 	    backend.supports_native_swizzle && type.basetype != SPIRType::Struct && type.array.empty() && type.columns == 1;
+	// END INTEL
 	bool swizzle_optimization = false;
 
 	for (uint32_t i = 0; i < length; i++)
@@ -6484,6 +6496,7 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 
 		auto &type = get<SPIRType>(result_type);
 
+		// BEGIN INTEL
 		auto *composite_expr = maybe_get<SPIRExpression>(ops[2]);
 		auto &composite_type = expression_type(ops[2]);
 
@@ -6493,6 +6506,8 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 		if (composite_expr && !composite_expr->loaded_from &&
 		    !(should_forward(ops[2]) && !composite_type.array.empty()))
 		{
+			// ISPC doesn't support complex composite extraction, of the form
+			// texturelod().x
 			if (!backend.supports_complex_composite_extraction)
 			{
 				if (forced_temporaries.find(ops[2]) == end(forced_temporaries))
@@ -6502,6 +6517,7 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 				}
 			}
 		}
+		// END INTEL
 
 		// We can only split the expression here if our expression is forwarded as a temporary.
 		bool allow_base_expression = forced_temporaries.find(id) == end(forced_temporaries);
@@ -9544,16 +9560,19 @@ void CompilerGLSL::emit_hoisted_temporaries(vector<pair<uint32_t, uint32_t>> &te
 	sort(begin(temporaries), end(temporaries),
 	     [](const pair<uint32_t, uint32_t> &a, const pair<uint32_t, uint32_t> &b) { return a.second < b.second; });
 
-	// Remove any duplicates. There shouldn't be any, but the odd one can creep in.
+	// BEGIN INTEL - Remove any duplicates. There shouldn't be any, but the odd one can creep in.
 	temporaries.erase(unique(temporaries.begin(), temporaries.end()), temporaries.end());
+	// END INTEL
 
 	for (auto &tmp : temporaries)
 	{
 		add_local_variable_name(tmp.second);
 		auto flags = meta[tmp.second].decoration.decoration_flags;
 		auto &type = get<SPIRType>(tmp.first);
+		// BEGIN INTEL - Add ISPC varying qualifiers
 		statement(flags_to_precision_qualifiers_glsl(type, flags), to_varying_qualifiers_ispc(tmp.second),
 		          variable_decl(type, to_name(tmp.second), tmp.second), ";");
+		// END INTEL
 
 		hoisted_temporaries.insert(tmp.second);
 		forced_temporaries.insert(tmp.second);
