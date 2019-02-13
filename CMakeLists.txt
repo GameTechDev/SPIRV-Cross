@@ -101,10 +101,12 @@ spirv_cross_add_library(spirv-cross-hlsl spirv_cross_hlsl STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/spirv_hlsl.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/spirv_hlsl.cpp)
 
+# BEGIN INTEL
 spirv_cross_add_library(spirv-cross-ispc spirv_cross_ispc STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/spirv_ispc.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/spirv_ispc.cpp)
 
+# END INTEL
 spirv_cross_add_library(spirv-cross-util spirv_cross_util STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/spirv_cross_util.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/spirv_cross_util.cpp)
@@ -114,13 +116,17 @@ target_compile_options(spirv-cross PRIVATE ${spirv-compiler-options})
 target_compile_definitions(spirv-cross PRIVATE ${spirv-compiler-defines})
 
 install(TARGETS spirv-cross RUNTIME DESTINATION bin)
+# BEGIN INTEL
 target_link_libraries(spirv-cross spirv-cross-glsl spirv-cross-hlsl spirv-cross-cpp spirv-cross-msl spirv-cross-ispc spirv-cross-util spirv-cross-core)
+# END INTEL
 target_link_libraries(spirv-cross-util spirv-cross-core)
 target_link_libraries(spirv-cross-glsl spirv-cross-core)
 target_link_libraries(spirv-cross-msl spirv-cross-glsl)
 target_link_libraries(spirv-cross-hlsl spirv-cross-glsl)
 target_link_libraries(spirv-cross-cpp spirv-cross-glsl)
+# BEGIN INTEL
 target_link_libraries(spirv-cross-ispc spirv-cross-glsl)
+# END INTEL
 
 # Set up tests, using only the simplest modes of the test_shaders
 # script.  You have to invoke the script manually to:

@@ -476,8 +476,10 @@ struct CLIArguments
 	bool fixup = false;
 	bool yflip = false;
 	bool sso = false;
+	// BEGIN INTEL
 	bool ispc_ignore_runtimearray_padding = false;
 	bool ispc_ignore_group_barriers = false;
+	// END INTEL
 	vector<PLSArg> pls_in;
 	vector<PLSArg> pls_out;
 	vector<Remap> remaps;
@@ -533,10 +535,12 @@ static void print_help()
 	                "\t[--hlsl]\n"
 	                "\t[--shader-model]\n"
 	                "\t[--hlsl-enable-compat]\n"
+	                // BEGIN INTEL
 	                "\t[--ispc]\n"
 	                "\t[--ispc-interface-name]\n"
 	                "\t[--ispc-ignore-runtimearray-padding]\n"
 	                "\t[--ispc-ignore-group-barriers]\n"
+	                // END INTEL
 	                "\t[--separate-shader-objects]\n"
 	                "\t[--pls-in format input-name]\n"
 	                "\t[--pls-out format output-name]\n"
@@ -691,6 +695,7 @@ static int main_inner(int argc, char *argv[])
 	cbs.add("--msl", [&args](CLIParser &) { args.msl = true; });
 	cbs.add("--hlsl", [&args](CLIParser &) { args.hlsl = true; });
 	cbs.add("--hlsl-enable-compat", [&args](CLIParser &) { args.hlsl_compat = true; });
+	// BEGIN INTEL
 	cbs.add("--ispc", [&args](CLIParser &) {
 		args.ispc = true;
 		args.vulkan_semantics = true;
@@ -700,6 +705,7 @@ static int main_inner(int argc, char *argv[])
 	cbs.add("--ispc-ignore-runtimearray-padding",
 	        [&args](CLIParser &) { args.ispc_ignore_runtimearray_padding = true; });
 	cbs.add("--ispc-ignore-group-barriers", [&args](CLIParser &) { args.ispc_ignore_group_barriers = true; });
+	// END INTEL
 	cbs.add("--vulkan-semantics", [&args](CLIParser &) { args.vulkan_semantics = true; });
 	cbs.add("--flatten-multidimensional-arrays", [&args](CLIParser &) { args.flatten_multidimensional_arrays = true; });
 	cbs.add("--no-420pack-extension", [&args](CLIParser &) { args.use_420pack_extension = false; });
@@ -812,6 +818,7 @@ static int main_inner(int argc, char *argv[])
 	}
 	else if (args.hlsl)
 		compiler = unique_ptr<CompilerHLSL>(new CompilerHLSL(read_spirv_file(args.input)));
+	// BEGIN INTEL
 	else if (args.ispc)
 	{
 		compiler = unique_ptr<CompilerISPC>(new CompilerISPC(read_spirv_file(args.input)));
@@ -838,6 +845,7 @@ static int main_inner(int argc, char *argv[])
 		if (args.ispc_ignore_group_barriers)
 			static_cast<CompilerISPC *>(compiler.get())->set_ignore_group_barriers();
 	}
+	// END INTEL
 	else
 	{
 		combined_image_samplers = !args.vulkan_semantics;

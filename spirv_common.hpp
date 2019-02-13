@@ -1035,7 +1035,9 @@ struct SPIRConstant : IVariant
 	SPIRConstant(uint32_t constant_type_, const uint32_t *elements, uint32_t num_elements, bool specialized)
 	    : constant_type(constant_type_)
 	    , specialization(specialized)
+	    // BEGIN INTEL
 	    , varying_constant_id(-1)
+	// END INTEL
 	{
 		subconstants.insert(end(subconstants), elements, elements + num_elements);
 		specialization = specialized;
@@ -1045,7 +1047,9 @@ struct SPIRConstant : IVariant
 	SPIRConstant(uint32_t constant_type_, uint32_t v0, bool specialized)
 	    : constant_type(constant_type_)
 	    , specialization(specialized)
+	    // BEGIN INTEL
 	    , varying_constant_id(-1)
+	// END INTEL
 	{
 		m.c[0].r[0].u32 = v0;
 		m.c[0].vecsize = 1;
@@ -1056,7 +1060,9 @@ struct SPIRConstant : IVariant
 	SPIRConstant(uint32_t constant_type_, uint64_t v0, bool specialized)
 	    : constant_type(constant_type_)
 	    , specialization(specialized)
+	    // BEGIN INTEL
 	    , varying_constant_id(-1)
+	// END INTEL
 	{
 		m.c[0].r[0].u64 = v0;
 		m.c[0].vecsize = 1;
@@ -1068,7 +1074,9 @@ struct SPIRConstant : IVariant
 	             bool specialized)
 	    : constant_type(constant_type_)
 	    , specialization(specialized)
+	    // BEGIN INTEL
 	    , varying_constant_id(-1)
+	// END INTEL
 	{
 		bool matrix = vector_elements[0]->m.c[0].vecsize > 1;
 
@@ -1104,8 +1112,10 @@ struct SPIRConstant : IVariant
 	bool specialization = false;
 	// If this constant is used as an array length which creates specialization restrictions on some backends.
 	bool is_used_as_array_length = false;
+	// BEGIN INTEL
 	// ISPC requires varying/uniform versions of constants
 	uint32_t varying_constant_id;
+	// END INTEL
 
 	// For composites which are constant arrays, etc.
 	std::vector<uint32_t> subconstants;
